@@ -3,12 +3,16 @@ from __future__ import print_function
 import csv
 import msgpack
 import os
+import re
 import sys
 import socket
 import subprocess
+import copy
 
 EVENT_VERSION = 1
 EVENT_TYPE_CELL = 1
+regex = ('[a-zA-Z]$')
+alpha_band=""
 
 # get the socket file
 socket_addr = os.environ['PUSH_ADDR']
@@ -39,23 +43,68 @@ cell_infos = []
 
 # read data from stdin
 cell_info_reader = csv.reader(sys.stdin)
-
 # form the event from all the info collected
 if os.path.exists("/run/modem_type") and subprocess.check_output(['cat', '/run/modem_type']) == "ec20":
     for cell_info in cell_info_reader:
         temp_cell_info = {}
-        plmn = cell_info[2]
-        temp_cell_info['MCC'] = int(plmn[:3])
-        temp_cell_info['MNC'] = int(plmn[3:])
-        if cell_info[5] == "-":
-            print("Found invalid record", cell_info)
-            continue
-        temp_cell_info['LAC'] = int(cell_info[5], 16)
-        temp_cell_info['CID'] = int(cell_info[6], 16)
-        temp_cell_info['Sig_Str'] = - int(cell_info[8], 10)
-        temp_cell_info['Band'] = cell_info[3].split(" ")[0]
-        temp_cell_info['GPRS'] = False
-        cell_infos.append(temp_cell_info)
+        if(cell_info[0]=="servingcell"):
+            if(cell_info[2]=="GSM"):
+                temp_cell_info['MCC'] = int(cell_info[3])
+                temp_cell_info['MNC'] = int(cell_info[4])
+                if cell_info[5] == "-":
+                    print("Found invalid record", cell_info)
+                    continue
+                temp_cell_info['LAC'] = int(cell_info[5], 16)
+                temp_cell_info['CID'] = int(cell_info[6], 16)
+                temp_cell_info['Sig_Str'] = - int(cell_info[10], 10)
+                
+                band_var = cell_info[2]
+                if (band_var=="LTE" or band_var=="GSM" or band_var=="WCDMA"):
+                    temp_cell_info['Band']=band_var
+                else:
+                    continue
+
+                temp_cell_info['GPRS'] = False
+                cell_infos.append(temp_cell_info)
+                
+            elif(cell_info[2]=="LTE"):
+                temp_cell_info['MCC'] = int(cell_info[4])
+                temp_cell_info['MNC'] = int(cell_info[5])
+                if cell_info[5] == "-":
+                    print("Found invalid record", cell_info)
+                    continue
+                temp_cell_info['LAC'] = int(cell_info[12], 16)
+                temp_cell_info['CID'] = int(cell_info[7], 16)
+                temp_cell_info['Sig_Str'] = - int(cell_info[13], 10)
+
+                band_var = cell_info[2]
+                if (band_var=="LTE" or band_var=="GSM" or band_var=="WCDMA"):
+                    temp_cell_info['Band']=band_var
+                else:
+                    continue
+
+                temp_cell_info['GPRS'] = False
+                cell_infos.append(temp_cell_info)
+        
+        elif(cell_info[0]=="neighbourcell"):
+            if(cell_info[1]=="GSM"):
+                temp_cell_info['MCC'] = int(cell_info[2])
+                temp_cell_info['MNC'] = int(cell_info[3])
+                if cell_info[4] == "-":
+                    print("Found invalid record", cell_info)
+                    continue
+                temp_cell_info['LAC'] = int(cell_info[4], 16)
+                temp_cell_info['CID'] = int(cell_info[5], 16)
+                temp_cell_info['Sig_Str'] = - int(cell_info[8], 10)
+
+                band_var = cell_info[1]
+                if (band_var=="LTE" or band_var=="GSM" or band_var=="WCDMA"):
+                    temp_cell_info['Band']=band_var
+                else:
+                    continue
+
+                temp_cell_info['GPRS'] = False
+                cell_infos.append(temp_cell_info)
 else:
     gsm_results = next(cell_info_reader)
     umts_results = next(cell_info_reader)
@@ -105,10 +154,22 @@ else:
         temp_cell_info['Band'] = 'WCDMA'
         temp_cell_info['GPRS'] = False
         cell_infos.append(temp_cell_info)
-print(cell_infos)
-# pack the array to msgp
 
-body = msgpack.packb(EVENT_VERSION)+ msgpack.packb(EVENT_TYPE_CELL) + msgpack.packb({'Cell_Info': cell_infos, 'Installing': False})
+# pack the array to msgp
+res_list = []
+tmp_cell_infos = copy.deepcopy(cell_infos)
+
+for data in tmp_cell_infos:
+    data['Sig_Str'] = 0
+
+for i in range(len(tmp_cell_infos)):
+    if tmp_cell_infos[i] not in tmp_cell_infos[i + 1:]:
+        res_list.append(cell_infos[i])
+
+for i in res_list:
+    print(i)
+
+body = msgpack.packb(EVENT_VERSION)+ msgpack.packb(EVENT_TYPE_CELL) + msgpack.packb({'Cell_Info': res_list, 'Installing': False})
 
 push_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
 push_socket.connect(socket_addr)
